@@ -27,108 +27,92 @@ LYRA requires **no paid cloud subscriptions** (₹0 budget constraint) and maint
 
 ---
 
-## Architectural Overview
+## Architecture
 
-```text
-                                 ┌────────────────────────────────────────────────────────┐
-                                 │                   USER INTERFACES                      │
-                                 │       Terminal CLI  /  Voice Pipeline (STT/TTS)        │
-                                 └──────────────────────────┬─────────────────────────────┘
-                                                            │
-                                                            ▼
-                                 ┌────────────────────────────────────────────────────────┐
-                                 │                 COMPANION ORCHESTRATOR                 │
-                                 │  * Session State Management    * Identity Isolation    │
-                                 │  * Prompt Sanitization         * Streaming Turn Loop   │
-                                 └──────────┬───────────────────┬─────────────────────────┘
-                                            │                   │
-                     ┌──────────────────────┴──────┐     ┌──────┴──────────────────────┐
-                     ▼                             │     ▼                             │
-    ┌─────────────────────────────────┐            │   ┌───────────────────────────┐   │
-    │          MODEL ROUTER           │            │   │       TOOL EXECUTOR       │   │
-    │  Priority & Dynamic Fallback    │            │   │  * Loop Limit Protection  │   │
-    └────────────────┬────────────────┘            │   │  * Schema Validation      │   │
-                     │                             │   └─────────────┬─────────────┘   │
-      ┌──────────────┼──────────────┐              │                 │                 │
-      ▼              ▼              ▼              │    ┌────────────┼────────────┐    │
-┌───────────┐  ┌───────────┐  ┌───────────┐        │    ▼            ▼            ▼    │
-│  Gemini   │  │   Groq    │  │ Cerebras  │        │ ┌─────┐   ┌───────────┐ ┌──────┐  │
-├───────────┤  ├───────────┤  ├───────────┤        │ │Time │   │  Weather  │ │Search│  │
-│OpenRouter │  │   Mock    │  │   LOCAL   │        │ ├─────┤   ├───────────┤ ├──────┤  │
-│           │  │           │  │ (Ollama)  │        │ │News │   │   Maps    │ │Files │  │
-└───────────┘  └───────────┘  └───────────┘        │ ├─────┤   ├───────────┤ ├──────┤  │
-                                                   │ │Memo-│   │  Browser  │ │Compu-│  │
-                                                   │ │  ry │   │(Sandboxed)│ │ ter  │  │
-                                                   │ └─────┘   └───────────┘ └──────┘  │
-                                                   ▼                                   ▼
-                                      ┌────────────────────────┐         ┌─────────────────────────┐
-                                      │   PERSISTENT MEMORY    │         │  AUTOMATION & SCHEDULER │
-                                      │ SQLite Repository      │         │ SQLite Task Queue       │
-                                      │ Selective Policies     │         │ Cron & Interval Engine  │
-                                      └────────────────────────┘         └─────────────────────────┘
+LYRA is split into two independent applications that talk over HTTP and WebSockets:
+
+```
+┌──────────────────────────┐   REST /api/*    ┌───────────────────────────────────────────────┐
+│  frontend/  (React+Vite) │ ───────────────▶ │  backend/  (FastAPI, app/)                     │
+│  chat · voice · tasks    │ ◀─────────────── │  routes · websockets · services                │
+│  memory · learning · docs│  WS /ws/chat     │        │                                       │
+│  dashboard · settings    │     /ws/voice    │        ▼                                       │
+│                          │     /ws/events   │  LYRA core (lyra/)                             │
+│  mic capture + playback  │                  │  orchestrator → planner → tool executor        │
+│  only — no AI, no keys   │                  │  model router → Gemini/Grok/Groq/Cerebras/     │
+└──────────────────────────┘                  │     OpenRouter/Anakin/Ollama (with fallback)   │
+                                              │  tools: browser · macOS · files · notes · …    │
+                                              │  voice STT/TTS · memory · learning · auth      │
+                                              │        │                                       │
+                                              │        ▼                                       │
+                                              │  SQLite in backend/storage/data · OS · web     │
+                                              └───────────────────────────────────────────────┘
 ```
 
----
+* The **frontend** only renders UI, captures the microphone (encoded to WAV in the browser) and plays audio.
+  It never talks to AI providers, never sees API keys and never executes commands.
+* The **backend** owns everything else: AI routing and fallback, planning, tool execution with the existing
+  permission system, verification, voice, memory, learning, documents, sessions and all databases.
+* The original terminal assistant (`python main.py`) still works and shares the same core, config and data.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/API.md](docs/API.md) and [docs/SETUP.md](docs/SETUP.md).
 
 ## Project Structure
 
-```text
-Lyra/
-├── lyra/
-│   ├── auth/              # User identity, local auth provider, session binding
-│   ├── automation/        # Background scheduler, triggers, actions, SQLite store
-│   ├── browser/           # Controlled browser automation, session management, security policy
-│   ├── companion/         # Core conversation orchestrator, prompt builders, session tracking
-│   ├── computer/          # Controlled screen, keyboard, mouse controllers with emergency stop
-│   ├── config/            # Strict typed settings with .env precedence and validation
-│   ├── core/              # Foundational types, base classes, and domain exceptions
-│   ├── interfaces/        # Interactive CLI with streaming, slash commands, and multi-user support
-│   ├── memory/            # SQLite memory repository, retention policies, epistemic categories
-│   ├── models/            # Immutable domain dataclasses (auth, automation, memory, multimodal, stream)
-│   ├── observability/     # Secret-scrubbing logging subsystem and diagnostic tracers
-│   ├── providers/         # Multi-provider integrations (Gemini, Groq, OpenRouter, Cerebras, Ollama)
-│   ├── routing/           # Intelligent priority router with rate-limit cooldown and fallback
-│   ├── tools/             # Real-world tools (Search, Weather, News, Time, Maps, Files, Vision)
-│   └── voice/             # Speech-to-text, text-to-speech, and audio streaming pipeline
-├── tests/
-│   ├── unit/              # 350+ unit and hardening test suites with 100% pass rate
-│   └── fixtures/          # Test data, mocks, and sample payloads
-├── .env.example           # Comprehensive template for configuration and credentials
-├── pyproject.toml         # Standard-library-first project specification
-└── README.md              # Project documentation
+```
+LYRA/
+├── backend/                 # Independent Python backend
+│   ├── main.py              # API server entry point (python main.py → :8000, docs at /docs)
+│   ├── cli.py               # Terminal assistant (voice / text chat), same core
+│   ├── app/                 # HTTP layer: core/ (config, errors, security, migration),
+│   │                        #   api/routes, api/websocket, services/, schemas.py
+│   ├── lyra/                # LYRA core (providers, routing, companion, tools, voice,
+│   │                        #   memory, learning, browser, computer, automation, auth)
+│   ├── tests/               # unit/ (core) + api/ (HTTP & WebSocket) — mock AI provider only
+│   ├── scripts/migrate_data.py
+│   ├── storage/             # data/ (SQLite), uploads/, backups/ — git-ignored
+│   ├── pyproject.toml, requirements.txt, .env.example
+├── frontend/                # Independent React + Vite app
+│   ├── src/{components,pages,services,hooks,context,utils,styles}
+│   ├── package.json, vite.config.js, .env.example
+├── docs/                    # ARCHITECTURE.md, API.md, SETUP.md
+├── scripts/dev.mjs          # Runs backend + frontend together
+├── package.json             # `npm run dev` / `npm run setup` / `npm test`
+└── main.py                  # Compatibility launcher for the terminal assistant
 ```
 
----
+## Quickstart
 
-## Quickstart & Installation
+Requirements: Python 3.14 (the existing `.venv` at the project root is used automatically), Node.js 20+, macOS for
+Mac automation and system voices.
 
-### Requirements
-- **Python**: 3.14 or later
-- **Operating System**: macOS (Apple Silicon / Intel), Linux, or Windows (WSL2)
-- **Zero Cost**: No external paid services required
-
-### 1. Set Up Environment
 ```bash
-git clone https://github.com/your-username/lyra.git
-cd Lyra
-
-# Create virtual environment with Python 3.14
-python3.14 -m venv .venv
-source .venv/bin/activate
-
-# Install in editable mode with development dependencies
-pip install -e ".[dev]"
+# one-time setup
+.venv/bin/pip install -e "backend[dev]"      # or: python3.14 -m venv .venv first
+cp backend/.env.example backend/.env         # add any API keys you have (all optional)
+npm run setup                                # installs frontend dependencies
 ```
 
-### 2. Configure Settings
+Run both apps together:
+
 ```bash
-cp .env.example .env
+npm run dev          # frontend http://localhost:5173 · backend http://127.0.0.1:8000/docs
 ```
-Edit `.env` to configure your preferences. All API keys are completely optional.
 
----
+Or run them separately:
 
-## Configuration Reference (`.env`)
+```bash
+cd backend && python main.py                 # API on http://127.0.0.1:8000
+cd frontend && npm run dev                   # UI on http://localhost:5173
+```
+
+Terminal assistant (unchanged behaviour): `python main.py` (voice), `cd backend && python cli.py chat` (text).
+
+Existing data is migrated automatically on first backend start: root-level `lyra_*.db` files and `.env` are copied into
+`backend/storage/data/` and `backend/.env`, verified table by table, and the originals are kept in
+`backend/storage/backups/`.
+
+## Configuration Reference (`backend/.env`)
 
 LYRA is fully functional out of the box with default zero-cost configurations:
 
@@ -144,9 +128,9 @@ LYRA is fully functional out of the box with default zero-cost configurations:
 | `CEREBRAS_API_KEY` | *(empty)* | Free Cerebras Cloud API key |
 | `LOCAL_PROVIDER_BASE_URL` | `http://localhost:11434` | Ollama or local LLM server endpoint |
 | `LOCAL_PROVIDER_MODEL` | `llama3.2` | Local model name installed in Ollama |
-| `MEMORY_DB_PATH` | `~/.lyra/memory.db` | Path to persistent SQLite memory database |
-| `AUTOMATION_DB_PATH`| `~/.lyra/automations.db` | Path to background task scheduler store |
-| `AUTH_DB_PATH` | `~/.lyra/auth.db` | Path to local authentication & credentials database |
+| `MEMORY_DB_PATH` | `lyra_memory.db` (in `backend/storage/data/`) | Path to persistent SQLite memory database |
+| `AUTOMATION_DB_PATH`| `lyra_automation.db` (in `backend/storage/data/`) | Path to background task scheduler store |
+| `AUTH_DB_PATH` | `lyra_auth.db` (in `backend/storage/data/`) | Path to local authentication & credentials database |
 | `COMPUTER_CONTROL_ENABLED` | `false` | Explicit master opt-in for computer interaction |
 | `BROWSER_ALLOW_HEADLESS` | `true` | Run browser automation in headless mode |
 
@@ -313,7 +297,7 @@ LYRA includes built-in deterministic, standard-library-first tools:
  
  ### Adding New Skills and Target Roles
  
- Skills and roles can be registered dynamically via the `SkillEngine` or seeded in [lyra/learning/skill_engine.py](file:///Users/vikas/Desktop/Lyra/lyra/learning/skill_engine.py):
+ Skills and roles can be registered dynamically via the `SkillEngine` or seeded in [lyra/learning/skill_engine.py](backend/lyra/learning/skill_engine.py):
  
  ```python
  from lyra.learning.models import Skill, TargetRole, SkillLevel
@@ -392,7 +376,7 @@ VOICE / TEXT INPUT
 
 ### Anakin Configuration & Setup
 
-Add the following environment variables to your `.env` file:
+Add the following environment variables to your `backend/.env` file:
 
 ```bash
 # Anakin AI Configuration
@@ -480,12 +464,12 @@ To enable real macOS and browser automation, grant the following permissions in 
 
 1. **Accessibility (`AXUIElement`)**:
    - Required for: Screen inspection, keyboard typing, window focusing, and system brightness/volume shortcuts.
-   - Target: Terminal, iTerm2, or VS Code (whichever is executing `python main.py`).
+   - Target: Terminal, iTerm2, or VS Code (whichever is running the LYRA backend or CLI).
 2. **Automation / Apple Events**:
    - Required for: Controlling **Notes.app**, **System Events**, **Google Chrome**, and **Safari**.
    - macOS will prompt once upon first execution: click **Allow**.
 3. **Microphone**:
-   - Required for: Voice-first continuous listening mode (`python main.py`).
+   - Required for: Voice-first continuous listening mode (`python main.py` or the web voice button).
 4. **Full Disk Access / Filesystem (Optional)**:
    - Required if managing files outside user's home directory.
 
@@ -493,7 +477,7 @@ To enable real macOS and browser automation, grant the following permissions in 
 
 ### Troubleshooting
 
-- **"Anakin API returned 401 / Unauthorized"**: Verify `ANAKIN_API_KEY` in `.env`. Ensure there are no surrounding whitespace characters or invalid prefixes.
+- **"Anakin API returned 401 / Unauthorized"**: Verify `ANAKIN_API_KEY` in `backend/.env`. Ensure there are no surrounding whitespace characters or invalid prefixes.
 - **"Anakin API returned 429 / Quota Exceeded"**: Your Anakin AI workspace plan has exceeded its rate limit or credit quota. LYRA will automatically route to Gemini or Ollama.
 - **"Notes automation failed / permission denied"**: Open **System Settings → Privacy & Security → Automation** and ensure your Terminal application has checked permission for **Notes** and **System Events**.
 - **"Browser could not click YouTube result"**: LYRA utilizes bounded retries across DOM selectors, accessibility tree selectors, and keyboard navigation (`Enter`). Ensure Chrome or default browser is not minimized behind a modal alert.
@@ -502,31 +486,14 @@ To enable real macOS and browser automation, grant the following permissions in 
 
 ## Running the Test Suite
 
-LYRA includes a comprehensive test suite of **559 unit and hardening tests**:
-
 ```bash
-# Run complete test suite (all 559 tests)
-pytest tests/unit/ -v
-
-# Run Anakin Provider & Workflow tests specifically
-pytest tests/unit/test_anakin_provider.py tests/unit/test_anakin_workflow_tool.py tests/unit/test_intent_router.py tests/unit/test_anakin_acceptance.py -v
+npm test                                   # or: cd backend && ../.venv/bin/python -m pytest -q
+cd backend && ../.venv/bin/python -m pytest tests/api -q    # HTTP/WebSocket API tests only
 ```
 
----
-
-## Running LYRA
-
-To start the complete LYRA system in full voice-first mode:
-
-```bash
-python main.py
-```
-
-This single command initializes configuration, secret scrubbing, provider routing (Gemini, Anakin, Ollama), memory, tool registry, macOS & browser executors, speech-to-text, text-to-speech, intent classification, and the verification layer.
-
----
+Tests never touch your real data (`tests/conftest.py` points `LYRA_DATA_DIR` at a temp directory) and the API tests use a
+mock AI provider; everything else (planner, tools, memory, learning, sessions, tasks) runs for real.
 
 ## License
 
-LYRA is open-source software licensed under the **MIT License**. See [LICENSE](LICENSE) for details.
-# Lyra-
+MIT

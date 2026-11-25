@@ -15,13 +15,23 @@ venv/
 ENV/
 env/
 
-# Environment and secrets
+# Environment and secrets (never commit real keys)
 .env
 .env.local
 .env.*.local
+!.env.example
 *.db
 *.sqlite
 *.sqlite3
+
+# Backend runtime data (databases, uploads, logs, migration backups)
+backend/storage/
+backend/downloads/
+backend/screenshots/
+
+# Frontend
+node_modules/
+frontend/dist/
 
 # Testing and coverage
 .pytest_cache/
