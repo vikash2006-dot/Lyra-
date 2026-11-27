@@ -8,6 +8,7 @@ import { StatusDot } from "../common/ui";
 
 const NAV = [
   { to: "/dashboard", label: "Dashboard", icon: "grid" },
+  { to: "/screen", label: "Screen", icon: "eye" },
   { to: "/learning", label: "Learning", icon: "book" },
   { to: "/memory", label: "Memory", icon: "brain" },
   { to: "/documents", label: "Documents", icon: "file" },

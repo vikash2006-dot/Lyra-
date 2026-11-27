@@ -7,15 +7,16 @@ import TypingIndicator from "./TypingIndicator";
 const NON_MODEL_SOURCES = new Set(["action_planner", "tool_executor", "tool", "system"]);
 
 export default function Message({ message, phase, onConfirm }) {
-  const { role, content, pending, error, task, source, stopped } = message;
+  const { role, content, pending, error, task, source, stopped, ack, muted } = message;
   const isUser = role === "user";
   return (
     <div className={`message ${isUser ? "from-user" : "from-lyra"}`}>
       {!isUser && <div className="avatar" aria-hidden><span /></div>}
       <div className="bubble-wrap">
+        {ack && !isUser && <p className="ack-line">{ack}</p>}
         {task && !isUser && <TaskCard task={task} onConfirm={onConfirm} />}
         {(content || pending || error) && (
-          <div className={`bubble ${error ? "has-error" : ""}`}>
+          <div className={`bubble ${error ? "has-error" : ""} ${muted ? "is-muted" : ""}`}>
             {content ? (isUser ? <p className="plain">{content}</p> : <Markdown text={content} />) : null}
             {pending && !content && <TypingIndicator phase={phase} />}
             {error && (

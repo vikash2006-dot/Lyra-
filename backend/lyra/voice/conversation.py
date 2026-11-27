@@ -21,10 +21,14 @@ from lyra.voice.base import SpeechToTextProvider, TextToSpeechProvider
 from lyra.voice.capture import MicrophoneCapture
 from lyra.voice.models import CancellationToken
 from lyra.voice.player import AudioPlayer
+from lyra.voice.voices import prepare_speech_text
 
 logger = get_logger("voice.conversation")
 
-_SENTENCE_SPLIT_REGEX = re.compile(r"([.?!:\n]+(?:\s+|$))")
+# Split only on real sentence endings (not ":" or line breaks) so speech isn't fragmented.
+_SENTENCE_SPLIT_REGEX = re.compile(r"((?<=[.?!])\s+)")
+_FIRST_CHUNK_MIN = 20     # speak the first sentence quickly
+_LATER_CHUNK_MIN = 160    # then merge sentences into fuller chunks for continuous delivery
 _EXIT_PHRASES = frozenset({"exit", "quit", "goodbye", "bye", "stop", "exit voice", "quit voice"})
 
 
@@ -65,7 +69,7 @@ class VoiceConversationManager:
 
     async def _speak_sentence(self, sentence: str, token: CancellationToken) -> None:
         """Speak a single sentence through the configured TTS provider and speaker player."""
-        clean = sentence.strip()
+        clean = prepare_speech_text(sentence)
         if not clean:
             return
 
@@ -75,7 +79,13 @@ class VoiceConversationManager:
         logger.debug("Speaking sentence: %s", clean[:40])
         try:
             if self.tts_provider.name == "system":
-                await self.player.speak_text_system(clean, cancellation_token=token)
+                voice = getattr(self.tts_provider, "voice_name", None)
+                await self.player.speak_text_system(
+                    clean,
+                    voice=None if voice in (None, "default") else voice,
+                    cancellation_token=token,
+                    rate=getattr(self.tts_provider, "rate", None),
+                )
             else:
                 chunk = await self.tts_provider.synthesize(clean, cancellation_token=token)
                 await self.player.play_chunk(chunk, cancellation_token=token)
@@ -134,9 +144,9 @@ class VoiceConversationManager:
         normalized = user_text.lower().rstrip(".?! ")
         if normalized in _EXIT_PHRASES:
             self.set_status("🔊 Speaking...")
-            sys.stdout.write("LYRA: Goodbye!\n\n")
+            sys.stdout.write("LYRA: See you soon, Boss. Take care!\n\n")
             sys.stdout.flush()
-            await self._speak_sentence("Goodbye!", self._cancellation_token)
+            await self._speak_sentence("See you soon, Boss. Take care!", self._cancellation_token)
             return False
 
         # 3. Speaking State (Streaming response from Gemini with sentence buffering)
@@ -145,7 +155,35 @@ class VoiceConversationManager:
         sys.stdout.flush()
 
         sentence_buffer = ""
-        accumulated_response = []
+        accumulated_response: list[str] = []
+        speech_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        spoken_chunks = 0
+
+        async def speaker() -> None:
+            # Speaks queued chunks back-to-back while the reply keeps streaming in.
+            while True:
+                chunk = await speech_queue.get()
+                if chunk is None or self._cancellation_token.is_cancelled:
+                    return
+                await self._speak_sentence(chunk, self._cancellation_token)
+
+        speaker_task = asyncio.create_task(speaker())
+
+        def flush_ready(final: bool = False) -> None:
+            nonlocal sentence_buffer, spoken_chunks
+            parts = _SENTENCE_SPLIT_REGEX.split(sentence_buffer)
+            complete = "".join(parts[:-1]).strip()  # everything up to the last sentence ending
+            pending = parts[-1] if parts else ""
+            threshold = _FIRST_CHUNK_MIN if spoken_chunks == 0 else _LATER_CHUNK_MIN
+            if final:
+                text = sentence_buffer.strip()
+                if text:
+                    speech_queue.put_nowait(text)
+                sentence_buffer = ""
+            elif complete and len(complete) >= threshold:
+                speech_queue.put_nowait(complete)
+                spoken_chunks += 1
+                sentence_buffer = pending
 
         try:
             async for event in self.orchestrator.stream_turn(self.session, user_text):
@@ -155,30 +193,25 @@ class VoiceConversationManager:
                     sys.stdout.flush()
                     accumulated_response.append(delta)
                     sentence_buffer += delta
-
-                    # Check for sentence boundaries to speak in chunks
-                    parts = _SENTENCE_SPLIT_REGEX.split(sentence_buffer)
-                    if len(parts) > 2:
-                        # We have at least one complete sentence!
-                        # parts[0] is the sentence text, parts[1] is the delimiter
-                        complete_sentence = parts[0] + parts[1]
-                        sentence_buffer = "".join(parts[2:])
-                        await self._speak_sentence(complete_sentence, self._cancellation_token)
+                    flush_ready()
 
                 elif isinstance(event, StreamError):
                     sys.stdout.write(f"\n[Error: {event.error_message}]\n")
                     sys.stdout.flush()
                     if not accumulated_response and event.error_message:
-                        await self._speak_sentence(event.error_message, self._cancellation_token)
+                        sentence_buffer = event.error_message
                     break
 
-            # Speak any trailing text left in sentence buffer
-            if sentence_buffer.strip() and not self._cancellation_token.is_cancelled:
-                await self._speak_sentence(sentence_buffer, self._cancellation_token)
+            # Speak any trailing text left in the buffer, then wait for speech to finish.
+            if not self._cancellation_token.is_cancelled:
+                flush_ready(final=True)
+            speech_queue.put_nowait(None)
+            await speaker_task
 
             sys.stdout.write("\n\n")
             sys.stdout.flush()
         except Exception as err:
+            speaker_task.cancel()
             logger.error("Error during conversation turn: %s", err)
             sys.stdout.write(f"\n[Conversation error: {err}]\n\n")
             sys.stdout.flush()

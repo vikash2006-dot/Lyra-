@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Header from "../components/layout/Header";
 import { useLayout } from "../components/layout/Layout";
 import { Badge, Card, ErrorBanner, PageHeader, Spinner, StatusDot, Toggle } from "../components/common/ui";
@@ -22,8 +22,28 @@ export default function SettingsPage() {
   const voices = useAsync(listVoices, []);
   const vstatus = useAsync(voiceStatus, []);
   const [saving, setSaving] = useState(false);
+  const [savingPref, setSavingPref] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [rate, setRate] = useState(null);
   const s = settings.data;
+  const femaleVoices = (voices.data || []).filter((v) => v.female);
+
+  useEffect(() => {
+    if (s?.assistant?.speech_rate) setRate(s.assistant.speech_rate);
+  }, [s?.assistant?.speech_rate]);
+
+  const saveAssistant = async (changes) => {
+    if (changes.speech_rate != null && changes.speech_rate === s?.assistant.speech_rate) return;
+    setSavingPref(true);
+    try {
+      settings.setData(await updateSettings(changes));
+      vstatus.reload();
+    } catch (err) {
+      notify(err.message, "error");
+    } finally {
+      setSavingPref(false);
+    }
+  };
 
   const setOffline = async (value) => {
     setSaving(true);
@@ -42,8 +62,8 @@ export default function SettingsPage() {
   const testVoice = async () => {
     setTesting(true);
     try {
-      const audio = await speak("Hi, I'm LYRA. This is how I sound.", prefs.voice || null);
-      playBase64Audio(audio.audio_base64, audio.mime_type, { onEnd: () => setTesting(false) });
+      const audio = await speak("Hello, Boss! I'm LYRA. This is how I sound. How can I help you today?");
+      playBase64Audio(audio.audio_base64, audio.mime_type, { volume: prefs.volume, onEnd: () => setTesting(false) });
     } catch (err) {
       notify(err.message, "error");
       setTesting(false);
@@ -76,21 +96,100 @@ export default function SettingsPage() {
         </Card>
 
         <Card title="Voice" icon="volume">
-          <Toggle label="Speak replies" description="Play LYRA's spoken response after voice commands." checked={prefs.autoSpeak} onChange={(v) => setPrefs({ autoSpeak: v })} />
-          <Toggle label="Hands-free conversation" description="Start listening again automatically after LYRA finishes speaking." checked={prefs.handsFree} onChange={(v) => setPrefs({ handsFree: v })} />
           <div className="field-row">
-            <label htmlFor="voice-select">Voice</label>
-            <select id="voice-select" value={prefs.voice} onChange={(e) => setPrefs({ voice: e.target.value })}>
-              <option value="">System default</option>
-              {(voices.data || []).map((v, i) => <option key={`${v.name}-${v.locale}-${i}`} value={v.name}>{v.name} ({v.locale})</option>)}
+            <label htmlFor="voice-select">LYRA's voice</label>
+            <select
+              id="voice-select"
+              value={s?.assistant.voice || ""}
+              onChange={(e) => saveAssistant({ voice: e.target.value })}
+              disabled={!s || savingPref}
+            >
+              {femaleVoices.length > 0 && (
+                <optgroup label="Female voices">
+                  {femaleVoices.map((v, i) => (
+                    <option key={`${v.name}-${i}`} value={v.name}>
+                      {v.name}{v.recommended ? " — recommended" : ""} ({v.locale})
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {s?.assistant.voice && !femaleVoices.some((v) => v.name === s.assistant.voice) && (
+                <option value={s.assistant.voice}>{s.assistant.voice}</option>
+              )}
             </select>
             <button className="btn btn-ghost btn-sm" onClick={testVoice} disabled={testing}>{testing ? "Playing…" : "Test voice"}</button>
           </div>
-          {vstatus.data && (
-            <p className="muted small">
-              Speech recognition: {vstatus.data.stt_provider} {vstatus.data.stt_ready ? "(ready)" : "(unavailable)"} ·
-              Speech synthesis: {vstatus.data.tts_provider} {vstatus.data.tts_ready ? "(ready)" : "(unavailable)"}
-            </p>
+          <div className="field-row">
+            <label htmlFor="rate">Speaking speed</label>
+            <input
+              id="rate"
+              type="range"
+              min="140"
+              max="230"
+              step="5"
+              value={rate ?? 182}
+              onChange={(e) => setRate(Number(e.target.value))}
+              onMouseUp={() => saveAssistant({ speech_rate: rate })}
+              onKeyUp={() => saveAssistant({ speech_rate: rate })}
+              onTouchEnd={() => saveAssistant({ speech_rate: rate })}
+              disabled={!s}
+            />
+            <span className="range-value">{rate ?? "—"} wpm</span>
+          </div>
+          <div className="field-row">
+            <label htmlFor="volume">Volume</label>
+            <input id="volume" type="range" min="0" max="1" step="0.05" value={prefs.volume}
+              onChange={(e) => setPrefs({ volume: Number(e.target.value) })} />
+            <span className="range-value">{Math.round(prefs.volume * 100)}%</span>
+          </div>
+          <Toggle label="Speak replies" description="Play LYRA's spoken response after voice commands." checked={prefs.autoSpeak} onChange={(v) => setPrefs({ autoSpeak: v })} />
+          <Toggle label="Allow interrupting" description="Tap the mic while LYRA is working or speaking to stop her." checked={prefs.allowInterrupt} onChange={(v) => setPrefs({ allowInterrupt: v })} />
+          <Toggle label="Hands-free conversation" description="Start listening again automatically after LYRA finishes speaking." checked={prefs.handsFree} onChange={(v) => setPrefs({ handsFree: v })} />
+          <p className="muted small">
+            For an even more natural voice, download “Ava (Premium)” or “Zoe (Premium)” in macOS System Settings → Accessibility →
+            Spoken Content → System Voice → Manage Voices; LYRA picks it up automatically after a backend restart.
+          </p>
+        </Card>
+
+        <Card title="Assistant behaviour" icon="sparkle">
+          {!s ? <Spinner /> : (
+            <>
+              <Toggle
+                label="Emotional awareness"
+                description="Notice possible emotional cues (sad, stressed, excited…) and respond with care. Never used for technical questions."
+                checked={s.assistant.emotional_awareness}
+                onChange={(v) => saveAssistant({ emotional_awareness: v })}
+                disabled={savingPref}
+              />
+              <Toggle
+                label="Screen awareness"
+                description="Let LYRA look at your screen when you ask (\u201clook at my screen\u201d, \u201cclick the Login button\u201d). More controls on the Screen page."
+                checked={s.assistant.screen_awareness}
+                onChange={(v) => saveAssistant({ screen_awareness: v })}
+                disabled={savingPref}
+              />
+              <Toggle
+                label="Use cloud vision AI for screenshots"
+                description="Allows sending screenshots to your AI vision provider. Off = on-device text recognition only."
+                checked={s.assistant.vision_cloud_consent}
+                onChange={(v) => saveAssistant({ vision_cloud_consent: v })}
+                disabled={savingPref || !s.assistant.screen_awareness}
+              />
+              <Toggle
+                label="Audio event detection"
+                description="Analyse the sound of voice clips for non-speech events, on this computer only."
+                checked={s.assistant.audio_event_detection}
+                onChange={(v) => saveAssistant({ audio_event_detection: v })}
+                disabled={savingPref}
+              />
+              <Toggle
+                label="Cough detection"
+                description="If a cough is detected, LYRA gently checks you're okay — at most once every 10 minutes. It never diagnoses."
+                checked={s.assistant.cough_detection}
+                onChange={(v) => saveAssistant({ cough_detection: v })}
+                disabled={savingPref || !s.assistant.audio_event_detection}
+              />
+            </>
           )}
         </Card>
 

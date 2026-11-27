@@ -139,10 +139,11 @@ export class MicRecorder {
 }
 
 /** Plays base64 audio from the backend; returns a controller with stop(). */
-export function playBase64Audio(base64, mimeType, { onEnd } = {}) {
+export function playBase64Audio(base64, mimeType, { onEnd, volume = 1 } = {}) {
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
   const url = URL.createObjectURL(new Blob([bytes], { type: mimeType || "audio/wav" }));
   const audio = new Audio(url);
+  audio.volume = Math.max(0, Math.min(1, volume));
   let done = false;
   const finish = () => {
     if (done) return;

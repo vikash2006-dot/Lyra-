@@ -98,7 +98,7 @@ def test_scenario_1_create_folder_on_desktop(test_environment):
         expected_folder = desktop_dir / "TestFolder"
         assert expected_folder.exists()
         assert expected_folder.is_dir()
-        assert "Done, I created TestFolder on your Desktop" in response
+        assert "I created TestFolder on your Desktop" in response
 
     asyncio.run(_test())
 

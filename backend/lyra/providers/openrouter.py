@@ -21,7 +21,9 @@ from lyra.providers.base import AIProvider
 
 _UNSET = object()
 DEFAULT_OPENROUTER_MODEL = "meta-llama/llama-3.3-70b-instruct:free"
-FALLBACK_OPENROUTER_MODELS = ("google/gemma-4-31b-it:free", "google/gemini-2.0-flash-exp:free")
+FALLBACK_OPENROUTER_MODELS = ("google/gemma-4-31b-it:free", "nvidia/nemotron-3.5-super-vl:free")
+# Free multimodal model used when an image arrives for the default text-only model.
+DEFAULT_OPENROUTER_VISION_MODEL = "google/gemma-4-31b-it:free"
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
@@ -72,13 +74,10 @@ class OpenRouterProvider(AIProvider):
             messages.append({"role": "system", "content": request.system_prompt})
 
         target_model = model
-        if request.has_images() and (
-            model == DEFAULT_OPENROUTER_MODEL
-            or "free" in model.lower()
-            or model in ("meta-llama/llama-3.3-70b-instruct:free", "google/gemma-4-31b-it:free")
-        ):
-            # Free tier multimodal model on OpenRouter
-            target_model = "google/gemini-2.0-flash-exp:free"
+        if request.has_images() and model in (DEFAULT_OPENROUTER_MODEL, "meta-llama/llama-3.3-70b-instruct:free"):
+            # The default model is text-only; switch to a free multimodal one. Explicitly requested
+            # models (e.g. a vision model chosen by LYRA's screen analyzer) are never overridden.
+            target_model = DEFAULT_OPENROUTER_VISION_MODEL
 
         for msg in request.messages:
             if msg.has_images():

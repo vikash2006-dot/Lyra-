@@ -5,6 +5,7 @@ const TITLES = {
   listening: "Listening — tap to finish",
   processing: "Working — tap to interrupt",
   speaking: "Speaking — tap to stop",
+  interrupted: "Interrupted — tap to talk again",
   error: "Voice error — tap to retry",
 };
 

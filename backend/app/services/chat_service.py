@@ -46,6 +46,7 @@ class ChatService:
         stream: bool = False,
         task: dict[str, Any] | None = None,
         source: str = "chat",
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Execute one turn. Raises APIError(SESSION_BUSY) if the session is mid-turn."""
         text = self.validate_message(message)
@@ -58,7 +59,7 @@ class ChatService:
             if task is not None:
                 task["session_id"] = session.session_id
             turn = TurnContext(session_id=session.session_id, command=text, emit=emit, task=task, source=source)
-            runner = asyncio.create_task(self._execute(turn, session, text, parts, stream))
+            runner = asyncio.create_task(self._execute(turn, session, text, parts, stream, metadata))
             if task is not None:
                 self.tracker.attach_handle(task["id"], runner)
             try:
@@ -81,6 +82,7 @@ class ChatService:
         text: str,
         parts: Sequence[Any] | None,
         stream: bool,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         current_turn.set(turn)
         if turn.task is not None:
@@ -97,7 +99,7 @@ class ChatService:
                 chunks: list[str] = []
                 stream_error: str | None = None
                 try:
-                    async for event in self.orchestrator.stream_turn(session, text, parts=parts,
+                    async for event in self.orchestrator.stream_turn(session, text, parts=parts, metadata=metadata,
                                                                      cancellation_token=token):
                         if isinstance(event, StreamStarted):
                             provider, model = event.provider, event.model
@@ -118,7 +120,7 @@ class ChatService:
                     emit(make_event("error", session_id=session.session_id,
                                     error={"code": "PROVIDER_UNAVAILABLE", "message": stream_error}))
             else:
-                reply = await self.orchestrator.process_turn(session, text, parts=parts)
+                reply = await self.orchestrator.process_turn(session, text, parts=parts, metadata=metadata)
                 last = session.messages[-1] if session.messages else None
                 if last is not None and last.role == Role.ASSISTANT:
                     model = (last.metadata or {}).get("model")

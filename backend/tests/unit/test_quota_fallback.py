@@ -198,7 +198,7 @@ def test_all_providers_unavailable(sample_request: AIRequest):
     orchestrator = CompanionOrchestrator(router=router)
 
     # Companion handles all providers failing gracefully without crashing or showing raw tracebacks
-    reply = asyncio.run(orchestrator.process_turn(session, "Hello LYRA"))
+    reply = asyncio.run(orchestrator.process_turn(session, "Tell me a fun fact, LYRA"))
     assert "unavailable" in reply.lower() or "quota" in reply.lower()
     assert "Traceback" not in reply
     assert "key=" not in reply
@@ -290,7 +290,7 @@ def test_voice_conversation_after_fallback():
     )
 
     manager.capture.capture_turn = AsyncMock(return_value=b"DUMMY_AUDIO_BYTES")
-    stt.set_transcription_text("How are you today?")
+    stt.set_transcription_text("What should I cook for dinner today?")
 
     should_continue = asyncio.run(manager.process_one_turn())
 
@@ -449,7 +449,7 @@ def test_action_execution_when_all_providers_quota_exhausted(tmp_path: Path, mon
 
     # 2. Friendly deterministic reply returned (no tracebacks or errors shown to user)
     assert "Projects" in reply
-    assert "Done, I created" in reply
+    assert "I created" in reply and reply.startswith("Done")
     assert "Traceback" not in reply
     assert "429" not in reply
 

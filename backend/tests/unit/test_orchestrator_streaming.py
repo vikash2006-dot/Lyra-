@@ -104,7 +104,7 @@ def test_orchestrator_stream_turn_unconfigured():
     events = []
 
     async def _run():
-        async for event in orchestrator.stream_turn(session, "hello"):
+        async for event in orchestrator.stream_turn(session, "tell me a fun fact"):
             events.append(event)
 
     asyncio.run(_run())

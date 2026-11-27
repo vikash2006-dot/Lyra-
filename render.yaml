@@ -1,0 +1,69 @@
+# Render Blueprint for the LYRA backend (FastAPI).
+# Deploy: Render Dashboard → New → Blueprint → select this repository.
+# Secrets marked `sync: false` are asked for once in the dashboard and are never stored in git.
+services:
+  - type: web
+    name: lyra-backend
+    runtime: python
+    rootDir: backend
+    plan: free                      # free instances sleep after ~15 min idle; data is NOT persistent (see disk below)
+    region: singapore
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn app.asgi:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips "*"
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.7
+      - key: APP_ENV
+        value: production
+      - key: LYRA_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      # Runs as a cloud server: Mac-only tools (files, apps, browser, keyboard/mouse, screen) are disabled.
+      - key: LYRA_SERVER_MODE
+        value: "true"
+      - key: LYRA_AUTO_MIGRATE
+        value: "false"
+      # Required in production: clients must send "Authorization: Bearer <token>" (frontend: VITE_API_TOKEN).
+      - key: LYRA_API_TOKEN
+        generateValue: true
+      # Your frontend's URL(s), comma-separated, e.g. https://lyra.example.com
+      - key: CORS_ORIGINS
+        sync: false
+      - key: PROVIDER_PRIORITY
+        value: gemini,xai,groq,cerebras,openrouter,anakin
+      - key: LOCAL_PROVIDER_ENABLED
+        value: "false"
+      - key: STT_PROVIDER
+        value: free
+      # Speech on a server needs ElevenLabs (macOS voices don't exist on Linux).
+      - key: TTS_PROVIDER
+        value: elevenlabs
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: XAI_API_KEY
+        sync: false
+      - key: ANAKIN_API_KEY
+        sync: false
+      - key: ANAKIN_APP_ID
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+    # Persistent storage (requires a paid plan, e.g. plan: starter). Uncomment to keep memories,
+    # conversations and learning data across deploys and restarts:
+    # disk:
+    #   name: lyra-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
+    # …and add:  - key: LYRA_DATA_DIR
+    #               value: /var/data

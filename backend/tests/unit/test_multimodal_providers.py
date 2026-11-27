@@ -76,7 +76,7 @@ def test_openrouter_multimodal_payload_construction():
     req = AIRequest(messages=[msg])
     payload = openrouter._build_payload(req, model="meta-llama/llama-3.3-70b-instruct:free")
 
-    assert payload["model"] == "google/gemini-2.0-flash-exp:free"
+    assert payload["model"] == "google/gemma-4-31b-it:free"  # retired gemini-2.0-flash-exp replaced
     msg_content = payload["messages"][0]["content"]
     assert msg_content[1]["type"] == "image_url"
 

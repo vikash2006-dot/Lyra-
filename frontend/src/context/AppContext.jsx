@@ -11,6 +11,8 @@ export function AppProvider({ children }) {
   const [eventsStatus, setEventsStatus] = useState("idle");
   const [tasks, setTasks] = useState({});
   const [toasts, setToasts] = useState([]);
+  // Live screen-awareness state pushed by the backend (state changes, new context, screen changes).
+  const [vision, setVision] = useState({ state: null, detail: null, context: null, changes: [] });
   const toastId = useRef(0);
 
   const notify = useCallback((message, level = "info", title) => {
@@ -59,6 +61,12 @@ export function AppProvider({ children }) {
       onEvent: (ev) => {
         if (ev.type === "task_update" && ev.task) upsertTask(ev.task);
         else if (ev.type === "notification") notify(ev.message, ev.level || "info", ev.title);
+        else if (ev.type === "vision_state") setVision((v) => ({ ...v, state: ev.state, detail: ev.detail }));
+        else if (ev.type === "vision_context") setVision((v) => ({ ...v, context: ev.cleared ? null : ev.context }));
+        else if (ev.type === "screen_change") {
+          setVision((v) => ({ ...v, changes: [ev, ...v.changes].slice(0, 20) }));
+          if (ev.change === "error_appeared") notify(ev.detail, "error", "Error appeared on screen");
+        }
       },
     });
     socket.connect();
@@ -85,8 +93,9 @@ export function AppProvider({ children }) {
       toasts,
       notify,
       dismissToast,
+      vision,
     }),
-    [health, eventsStatus, refreshHealth, taskList, upsertTask, refreshTasks, toasts, notify, dismissToast],
+    [health, eventsStatus, refreshHealth, taskList, upsertTask, refreshTasks, toasts, notify, dismissToast, vision],
   );
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

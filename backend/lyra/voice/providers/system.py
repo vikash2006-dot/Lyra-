@@ -43,8 +43,9 @@ def _make_dummy_wav(text: str) -> bytes:
 class SystemTTSProvider(TextToSpeechProvider):
     """Zero-cost, offline system voice synthesizer (uses macOS say or fallback)."""
 
-    def __init__(self, voice_name: str = "default", output_format: str = "aiff") -> None:
+    def __init__(self, voice_name: str = "default", output_format: str = "aiff", rate: int | None = None) -> None:
         self.voice_name = voice_name
+        self.rate = rate  # words per minute; None keeps the system default pace
         # "aiff" (native macOS say output, used by the local speaker player) or
         # "wav" (16-bit PCM, playable by web browsers through the HTTP API).
         self.output_format = "wav" if output_format.lower() in ("wav", "wave") else "aiff"
@@ -82,6 +83,8 @@ class SystemTTSProvider(TextToSpeechProvider):
                 selected_voice = voice or (self.voice_name if self.voice_name != "default" else None)
                 if selected_voice:
                     cmd += ["-v", selected_voice]
+                if self.rate:
+                    cmd += ["-r", str(int(self.rate))]
                 cmd.append(text)
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,

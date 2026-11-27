@@ -192,15 +192,17 @@ class ToolExecutor:
             )
         )
 
+        # Tools may declare a longer budget (e.g. vision analysis); default stays unchanged.
+        timeout = max(self.timeout_seconds, float(getattr(tool, "timeout_seconds", 0) or 0))
         try:
             result = await asyncio.wait_for(
                 tool.execute(exec_request),
-                timeout=self.timeout_seconds,
+                timeout=timeout,
             )
             self._logger.info("Tool '%s' executed successfully", tool.name)
             return result
         except asyncio.TimeoutError:
-            error_msg = f"Tool '{tool.name}' timed out after {self.timeout_seconds} seconds."
+            error_msg = f"Tool '{tool.name}' timed out after {timeout} seconds."
             self._logger.error("Tool timeout: %s", error_msg)
             return ToolResult(tool_name=tool.name, success=False, error=error_msg)
         except ToolError as tool_err:

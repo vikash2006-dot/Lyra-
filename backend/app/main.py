@@ -27,6 +27,10 @@ def create_app(
 ) -> FastAPI:
     config = config or load_server_config()
 
+    if config.is_production and not config.api_token:
+        # A public server without a token would let anyone spend your AI quota and read your data.
+        raise RuntimeError("LYRA_API_TOKEN must be set when APP_ENV=production.")
+
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         config.data_dir.mkdir(parents=True, exist_ok=True)
@@ -44,10 +48,17 @@ def create_app(
             except Exception as err:  # automation is optional; never block startup
                 services.init_errors.append(f"scheduler: {err}")
                 logger.warning("Automation scheduler failed to start: %s", err)
+        if services.runtime.screen is not None:
+            from lyra.vision.ocr import warm_up
+
+            app.state.ocr_warmup = asyncio.create_task(warm_up())  # background; never delays startup
         logger.info("LYRA API ready (env=%s, data=%s)", config.app_env, config.data_dir)
         try:
             yield
         finally:
+            screen = services.runtime.screen
+            if screen is not None and screen.monitor.running:
+                await screen.monitor.stop()
             if services.scheduler_running:
                 try:
                     await asyncio.wait_for(services.runtime.scheduler.stop(), timeout=5)
@@ -86,6 +97,7 @@ def create_app(
         settings,
         system,
         tasks,
+        vision,
         voice,
     )
     from app.api.websocket import chat as ws_chat
@@ -94,7 +106,7 @@ def create_app(
 
     app.include_router(health.router, prefix="/api")  # health stays public for launchers/monitors
     protected = [Depends(require_token)]
-    for module in (chat, tasks, voice, memory, sessions, settings, system, documents, learning):
+    for module in (chat, tasks, voice, memory, sessions, settings, system, documents, learning, vision):
         app.include_router(module.router, prefix="/api", dependencies=protected)
     app.include_router(ws_chat.router)
     app.include_router(ws_voice.router)

@@ -36,6 +36,7 @@ class AudioPlayer:
         text: str,
         voice: str | None = None,
         cancellation_token: CancellationToken | None = None,
+        rate: int | None = None,
     ) -> None:
         """Speak text directly through the system speech synthesizer (macOS say)."""
         clean_text = text.strip()
@@ -52,6 +53,8 @@ class AudioPlayer:
         cmd = [self._say_path]
         if voice:
             cmd.extend(["-v", voice])
+        if rate:
+            cmd.extend(["-r", str(int(rate))])
         cmd.append(clean_text)
 
         logger.debug("Running system speak: %s", clean_text[:40])

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 const KEY = "lyra.preferences";
-const DEFAULTS = { autoSpeak: true, handsFree: false, voice: "", showActivity: true };
+const DEFAULTS = { autoSpeak: true, handsFree: false, showActivity: true, volume: 0.9, allowInterrupt: true };
 
 function load() {
   try {

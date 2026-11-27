@@ -351,5 +351,5 @@ def test_capability_25_voice_action_tts_simulation(session):
     # Verify action was executed
     assert mock_executor.execute.called
     # Verify concise spoken response suitable for TTS
-    assert response == "Done. Set brightness to 60%."
+    assert response.startswith("Done") and response.endswith("Set brightness to 60%.")
     assert len(response.split()) <= 15

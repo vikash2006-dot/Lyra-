@@ -65,11 +65,16 @@ def build_services(config: ServerConfig, runtime_factory: RuntimeFactory | None 
         logger.info("Marked %d tasks from a previous run as interrupted", interrupted)
 
     tasks = TaskTracker(store, bus)
+    tasks.ack_fn = runtime.orchestrator.styler.acknowledgement
     # Observe planning and tool execution without changing LYRA's orchestrator logic.
     orch = runtime.orchestrator
     orch.planner = ObservedPlanner(orch.planner, tasks)  # type: ignore[assignment]
     if orch.tool_executor is not None:
         orch.tool_executor = ObservedToolExecutor(orch.tool_executor, tasks)  # type: ignore[assignment]
+    if getattr(orch, "visual_agent", None) is not None:
+        orch.visual_agent.tool_executor = orch.tool_executor  # visual steps show up as tracked task steps
+    if runtime.screen is not None:
+        runtime.screen.add_listener(lambda ev: bus.publish(make_event(ev.pop("type"), **ev)))
 
     sessions = SessionService(store, config.user_id)
     chat = ChatService(orch, sessions, tasks)
@@ -83,7 +88,7 @@ def build_services(config: ServerConfig, runtime_factory: RuntimeFactory | None 
         learning=runtime.learning_service,
         chat=chat,
     )
-    return AppServices(
+    services = AppServices(
         config=config,
         runtime=runtime,
         store=store,
@@ -95,6 +100,53 @@ def build_services(config: ServerConfig, runtime_factory: RuntimeFactory | None 
         documents=documents,
         limiter=RateLimiter(config.rate_limit_per_minute),
     )
+    try:
+        apply_preferences(services, store.get_preferences(), persist=False)
+    except Exception as err:  # a stale saved voice must never block startup
+        logger.warning("Could not apply saved preferences: %s", err)
+    return services
+
+
+ASSISTANT_PREF_KEYS = (
+    "emotional_awareness", "audio_event_detection", "cough_detection", "voice", "speech_rate",
+    "screen_awareness", "vision_cloud_consent",
+)
+
+
+def assistant_preferences(services: "AppServices") -> dict[str, Any]:
+    return {
+        "emotional_awareness": services.runtime.orchestrator.emotional_awareness,
+        "audio_event_detection": services.voice.audio_event_detection,
+        "cough_detection": services.voice.cough_detection,
+        "voice": services.voice.voice_name,
+        "speech_rate": services.voice.speech_rate,
+        "screen_awareness": bool(services.runtime.screen and services.runtime.screen.enabled),
+        "vision_cloud_consent": bool(services.runtime.screen and services.runtime.screen.cloud_consent),
+    }
+
+
+def apply_preferences(services: "AppServices", prefs: dict[str, Any], persist: bool = True) -> None:
+    """Apply (and optionally persist) assistant preferences changed from the UI."""
+    changes = {k: v for k, v in prefs.items() if k in ASSISTANT_PREF_KEYS and v is not None}
+    if "voice" in changes:
+        services.voice.set_voice(str(changes["voice"]))
+    if "speech_rate" in changes:
+        services.voice.set_rate(int(changes["speech_rate"]))
+    if "emotional_awareness" in changes:
+        services.runtime.orchestrator.emotional_awareness = bool(changes["emotional_awareness"])
+    if "audio_event_detection" in changes:
+        services.voice.audio_event_detection = bool(changes["audio_event_detection"])
+    if "cough_detection" in changes:
+        services.voice.cough_detection = bool(changes["cough_detection"])
+    screen = services.runtime.screen
+    if screen is not None and "screen_awareness" in changes:
+        screen.enabled = bool(changes["screen_awareness"])
+        if not screen.enabled:
+            screen.clear_context()
+    if screen is not None and "vision_cloud_consent" in changes:
+        screen.cloud_consent = bool(changes["vision_cloud_consent"])
+    if persist and changes:
+        services.store.set_preferences(changes)
 
 
 def provider_summaries(runtime: LyraRuntime) -> list[dict[str, Any]]:

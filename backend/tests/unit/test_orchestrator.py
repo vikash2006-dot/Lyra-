@@ -116,7 +116,7 @@ def test_orchestrator_no_configured_providers_safety() -> None:
     orchestrator = CompanionOrchestrator(router=router)
     session = Session()
 
-    reply = orchestrator.process_turn_sync(session, "Hello LYRA")
+    reply = orchestrator.process_turn_sync(session, "Tell me a fun fact, LYRA")
 
     assert reply == UNCONFIGURED_ASSISTANCE_MESSAGE
     assert "without any configured AI providers" in reply

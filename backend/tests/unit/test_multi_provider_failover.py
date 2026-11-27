@@ -461,7 +461,7 @@ def test_n_tool_execution_provider_independence(session):
 
     # Execute system tool action (offline format_result)
     reply = asyncio.run(orchestrator.process_turn(session, "increase volume"))
-    assert reply == "Done. Set volume to 80%."
+    assert reply.startswith("Done") and reply.endswith("Set volume to 80%.")
     assert mock_executor.execute.called
 
     # When online, verify Grok handles the response synthesis seamlessly after Gemini failure

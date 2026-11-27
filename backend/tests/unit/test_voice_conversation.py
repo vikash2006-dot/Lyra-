@@ -81,7 +81,7 @@ def test_voice_conversation_manager_turn_and_exit(capsys: pytest.CaptureFixture[
     captured = capsys.readouterr()
     assert "You: Hello Lyra" in captured.out
     assert "LYRA: Hello! I am Lyra, your personal AI operating system. How can I help you today?" in captured.out
-    assert "Goodbye!" in captured.out
+    assert "See you soon, Boss" in captured.out
 
 
 def test_voice_conversation_silence_timeout_continues() -> None:

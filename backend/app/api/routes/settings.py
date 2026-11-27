@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request
 from app.api.deps import get_services
 from app.core.errors import ok
 from app.schemas import SettingsUpdateRequest
-from app.services.container import AppServices, provider_summaries
+from app.services.container import AppServices, apply_preferences, assistant_preferences, provider_summaries
 
 router = APIRouter(tags=["settings"])
 
@@ -57,7 +57,15 @@ def _settings_view(services: AppServices) -> dict:
             "cors_origins": list(services.config.cors_origins),
             "max_upload_mb": services.config.max_upload_bytes // (1024 * 1024),
         },
-        "editable": ["general.offline_mode"],
+        "assistant": assistant_preferences(services),
+        "editable": [
+            "general.offline_mode",
+            "assistant.emotional_awareness",
+            "assistant.audio_event_detection",
+            "assistant.cough_detection",
+            "assistant.voice",
+            "assistant.speech_rate",
+        ],
         "note": "Other values come from backend/.env; edit it and restart the backend to change them.",
     }
 
@@ -73,6 +81,7 @@ async def update_settings(body: SettingsUpdateRequest, request: Request) -> dict
     if body.offline_mode is not None:
         # The orchestrator's setter propagates to the router, routing strategy and tool executor.
         services.runtime.orchestrator.offline_mode = body.offline_mode
+    apply_preferences(services, body.model_dump(exclude_unset=True, exclude={"offline_mode"}))
     return ok(_settings_view(services), "Settings updated")
 
 

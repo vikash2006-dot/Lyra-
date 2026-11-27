@@ -53,6 +53,9 @@ class ConversationContext:
         system_prompt = self.personality.build_system_prompt()
         if memory_context and memory_context.strip():
             system_prompt = f"{system_prompt}\n\n{memory_context.strip()}"
+        guidance = (metadata or {}).get("turn_guidance")
+        if isinstance(guidance, str) and guidance.strip():
+            system_prompt = f"{system_prompt}\n\n{guidance.strip()}"
 
         req_metadata = dict(metadata) if metadata else {}
         req_metadata["session_id"] = session.session_id

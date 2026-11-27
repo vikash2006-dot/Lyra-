@@ -46,6 +46,13 @@ class SpeakRequest(BaseModel):
 
 class SettingsUpdateRequest(BaseModel):
     offline_mode: bool | None = None
+    emotional_awareness: bool | None = None
+    audio_event_detection: bool | None = None
+    cough_detection: bool | None = None
+    voice: str | None = Field(None, max_length=80)
+    speech_rate: int | None = Field(None, ge=120, le=260)
+    screen_awareness: bool | None = None
+    vision_cloud_consent: bool | None = None
 
 
 class DocumentAnalyzeRequest(BaseModel):
@@ -93,3 +100,31 @@ class Envelope(BaseModel):
     success: bool
     data: Any = None
     message: str | None = None
+
+
+class VisionAnalyzeRequest(BaseModel):
+    question: str | None = Field(None, max_length=2000)
+    session_id: str | None = Field(None, max_length=64)
+    target: Literal["screen", "active_window"] = "screen"
+    display: int | None = Field(None, ge=1, le=16)
+    use_ai: bool = True
+
+
+class VisionCaptureRequest(BaseModel):
+    session_id: str | None = Field(None, max_length=64)
+    target: Literal["screen", "active_window"] = "screen"
+    display: int | None = Field(None, ge=1, le=16)
+
+
+class VisionCommandRequest(BaseModel):
+    command: str = Field(..., min_length=1, max_length=2000)
+    session_id: str | None = Field(None, max_length=64)
+
+
+class VisionMonitorRequest(BaseModel):
+    interval_seconds: float | None = Field(None, ge=2, le=60)
+
+
+class VisionSettingsRequest(BaseModel):
+    enabled: bool | None = None
+    cloud_consent: bool | None = None

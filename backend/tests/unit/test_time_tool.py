@@ -86,3 +86,12 @@ def test_time_tool_format_result():
     # Failure format
     err_res = ToolResult(tool_name="time", success=False, error="Clock fault")
     assert "couldn't retrieve the time" in tool.format_result(err_res)
+
+
+def test_time_tool_ignores_words_containing_time_or_date():
+    """Regression: 'timer', 'update', 'validate' must not trigger the time tool."""
+    tool = TimeTool()
+    assert tool.can_handle("Give me a tiny Python Pomodoro timer example") is None
+    assert tool.can_handle("Please update the docs") is None
+    assert tool.can_handle("Sometimes I validate input twice") is None
+    assert tool.can_handle("what day is it today") == {"format": "12h"}

@@ -212,6 +212,6 @@ def test_graceful_behavior_when_gemini_key_missing() -> None:
     orchestrator = CompanionOrchestrator(router=router, tool_registry=ToolRegistry())
 
     session = Session()
-    reply = asyncio.run(orchestrator.process_turn(session, "Hello LYRA"))
+    reply = asyncio.run(orchestrator.process_turn(session, "Tell me a fun fact, LYRA"))
     assert reply == UNCONFIGURED_ASSISTANCE_MESSAGE
 

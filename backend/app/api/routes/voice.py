@@ -56,11 +56,21 @@ async def voice_command(
     data = await _read_audio(request, audio)
     services.voice.check_duplicate(data)
     transcript = await services.voice.transcribe(data, services.config.max_audio_bytes)
+    audio_events = services.voice.analyze_audio(data, session_id)
     if not transcript["text"]:
-        return ok({"transcript": "", "response": None, "audio": None, "session_id": session_id},
-                  "No speech detected")
-    turn = await services.chat.run_turn(transcript["text"], session_id, source="voice")
+        if audio_events:
+            reply = services.voice.cough_only_reply()
+            audio_out = await services.voice.speak(reply, voice) if speak else None
+            return ok({"transcript": "", "response": reply, "audio": audio_out, "session_id": session_id,
+                       "audio_events": audio_events}, "Audio event detected")
+        return ok({"transcript": "", "response": None, "audio": None, "session_id": session_id,
+                   "audio_events": []}, "No speech detected")
+    turn = await services.chat.run_turn(
+        transcript["text"], session_id, source="voice",
+        metadata={"audio_events": audio_events} if audio_events else None,
+    )
     audio_out = None
     if speak and turn.get("response"):
         audio_out = await services.voice.speak(turn["response"], voice)
-    return ok({"transcript": transcript["text"], **turn, "audio": audio_out}, "Voice command processed")
+    return ok({"transcript": transcript["text"], **turn, "audio": audio_out, "audio_events": audio_events},
+              "Voice command processed")

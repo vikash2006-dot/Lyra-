@@ -50,6 +50,7 @@ from lyra.tools.memory_tool import MemoryTool
 from lyra.tools.news import NewsTool
 from lyra.tools.notes_tool import NotesTool
 from lyra.tools.registry import ToolRegistry
+from lyra.tools.screen_tool import ScreenTool
 from lyra.tools.search import SearchTool
 from lyra.tools.system_tool import SystemTool
 from lyra.tools.time_tool import TimeTool
@@ -67,6 +68,14 @@ PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "anakin": "Anakin",
     "local": "Ollama",
 }
+
+
+SERVER_MODE_ENV = "LYRA_SERVER_MODE"
+
+
+def server_mode_enabled() -> bool:
+    """True when LYRA runs on a remote server rather than on the user's own Mac."""
+    return os.environ.get(SERVER_MODE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
 
 def provider_display_name(name: str) -> str:
@@ -147,7 +156,11 @@ def build_voice_providers(settings: Settings) -> tuple[Any, Any]:
             default_voice_id=settings.elevenlabs_voice_id,
         )
     else:
-        tts = SystemTTSProvider()
+        from lyra.voice.voices import select_female_voice
+
+        # Always request an explicit natural female voice; the macOS default may be male.
+        voice = select_female_voice(settings.tts_voice) or "default"
+        tts = SystemTTSProvider(voice_name=voice, rate=settings.tts_rate)
     return stt, tts
 
 
@@ -168,6 +181,7 @@ class LyraRuntime:
     scheduler: Scheduler
     auth_manager: AuthManager
     orchestrator: CompanionOrchestrator
+    screen: Any = None  # lyra.vision.service.ScreenAwareness
 
 
 def build_runtime(
@@ -188,7 +202,10 @@ def build_runtime(
     if use_mock_computer is None:
         use_mock_computer = "pytest" in sys.modules or sys.platform != "darwin"
     computer_controller = ComputerController.from_settings(settings=settings, use_mock=use_mock_computer)
-    computer_controller.enabled = True
+    # Server mode (e.g. deployed on Render): the host is not the user's computer, so tools that act on
+    # the local machine are left out and computer control is disabled instead of silently "succeeding".
+    server_mode = server_mode_enabled()
+    computer_controller.enabled = not server_mode
 
     # Adaptive learning
     learning_repo = SQLiteLearningRepository(db_path=settings.learning_db_path)
@@ -206,6 +223,8 @@ def build_runtime(
         NewsTool(),
         MapsTool(),
         MemoryTool(memory_manager=memory_manager),
+    ]
+    local_tools: list[Any] = [
         FileTool(),
         FilesystemTool(),
         VisionTool(),
@@ -217,6 +236,15 @@ def build_runtime(
         KeyboardTool(),
         MouseTool(),
     ]
+    from lyra.vision.service import ScreenAwareness
+
+    screen = ScreenAwareness(router, computer_controller=computer_controller, settings=settings)
+    if server_mode:
+        screen.enabled = False
+        screen.server_mode = True
+    else:
+        tools.extend(local_tools)
+        tools.append(ScreenTool(screen))
     tools.extend(create_learning_tools(learning_service))
     tools.extend(create_anakin_workflow_tools(settings=settings))
     tool_registry = ToolRegistry(tools=tools)
@@ -258,6 +286,9 @@ def build_runtime(
         offline_mode=offline_mode,
         learning_service=learning_service,
     )
+    from lyra.vision.agent import VisualAgent
+
+    orchestrator.visual_agent = VisualAgent(screen, router, tool_executor, orchestrator.styler)
 
     return LyraRuntime(
         settings=settings,
@@ -273,4 +304,5 @@ def build_runtime(
         scheduler=scheduler,
         auth_manager=auth_manager,
         orchestrator=orchestrator,
+        screen=screen,
     )

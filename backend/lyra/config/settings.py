@@ -25,6 +25,7 @@ DEFAULT_ANAKIN_APP_TYPE: str = "quickapp"
 DEFAULT_LOCAL_PROVIDER_ENABLED: bool = False
 DEFAULT_STT_PROVIDER: str = "free"
 DEFAULT_TTS_PROVIDER: str = "system"
+DEFAULT_TTS_RATE: int = 182  # words per minute for macOS speech (natural conversational pace)
 DEFAULT_VOICE_SILENCE_DURATION: float = 1.2
 DEFAULT_VOICE_INPUT_TIMEOUT: float = 15.0
 DEFAULT_AUTH_DB_PATH: str = "lyra_auth.db"
@@ -113,6 +114,8 @@ class Settings:
     stt_provider: str = DEFAULT_STT_PROVIDER
     tts_provider: str = DEFAULT_TTS_PROVIDER
     voice_silence_duration_seconds: float = DEFAULT_VOICE_SILENCE_DURATION
+    tts_voice: str | None = None  # None -> best installed natural female voice
+    tts_rate: int = DEFAULT_TTS_RATE
     voice_input_timeout_seconds: float = DEFAULT_VOICE_INPUT_TIMEOUT
 
     # Phase 9: Memory settings
@@ -263,6 +266,8 @@ def load_settings(
         "ELEVENLABS_VOICE_ID",
         "VOICE_TIMEOUT_SECONDS",
         "STT_PROVIDER",
+        "TTS_VOICE",
+        "TTS_RATE",
         "TTS_PROVIDER",
         "VOICE_SILENCE_DURATION_SECONDS",
         "VOICE_INPUT_TIMEOUT_SECONDS",
@@ -410,6 +415,17 @@ def load_settings(
             raise ConfigurationError(
                 f"Invalid VOICE_SILENCE_DURATION_SECONDS '{raw_silence}': must be a positive number."
             ) from err
+
+    tts_voice = (merged.get("TTS_VOICE") or "").strip() or None
+    raw_rate = merged.get("TTS_RATE")
+    tts_rate = DEFAULT_TTS_RATE
+    if raw_rate is not None and str(raw_rate).strip():
+        try:
+            tts_rate = int(float(raw_rate))
+            if not 90 <= tts_rate <= 320:
+                raise ValueError
+        except ValueError as err:
+            raise ConfigurationError(f"Invalid TTS_RATE '{raw_rate}': must be 90-320 words per minute.") from err
 
     raw_input_timeout = merged.get("VOICE_INPUT_TIMEOUT_SECONDS")
     voice_input_timeout = DEFAULT_VOICE_INPUT_TIMEOUT
@@ -652,6 +668,8 @@ def load_settings(
         stt_provider=stt_provider,
         tts_provider=tts_provider,
         voice_silence_duration_seconds=voice_silence_dur,
+        tts_voice=tts_voice,
+        tts_rate=tts_rate,
         voice_input_timeout_seconds=voice_input_timeout,
         memory_db_path=merged.get("MEMORY_DB_PATH", "lyra_memory.db").strip() or "lyra_memory.db",
         learning_db_path=merged.get("LEARNING_DB_PATH", DEFAULT_LEARNING_DB_PATH).strip() or DEFAULT_LEARNING_DB_PATH,

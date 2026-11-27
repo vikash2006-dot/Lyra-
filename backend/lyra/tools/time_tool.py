@@ -1,5 +1,6 @@
 """Local TimeTool implementation for LYRA."""
 
+import re
 from datetime import datetime, timezone
 import time
 from typing import Any, Callable
@@ -48,19 +49,29 @@ class TimeTool(Tool):
     def can_handle(self, user_input: str) -> dict[str, Any] | None:
         """Check if user query is asking for date, time, or timezone."""
         lowered = user_input.lower().strip()
-        time_triggers = (
-            "time",
-            "what time",
-            "current time",
-            "what is the time",
-            "tell me the time",
-            "date",
-            "what day",
-            "today's date",
-            "clock",
-            "timezone",
+        # Whole-word matching only: "timer", "update", "sometimes" or "validate" are not time questions.
+        if re.search(r"\btimer?s?\b.*\b(?:code|example|script|function|python|app|program|countdown)\b"
+                     r"|\b(?:pomodoro|stopwatch|countdown)\b", lowered):
+            return None
+        time_patterns = (
+            r"\bwhat(?:'s| is)? (?:the )?(?:current )?time\b",
+            r"\bwhat time\b",
+            r"\bcurrent time\b",
+            r"\btime (?:is it|now|right now)\b",
+            r"\btell me the time\b",
+            r"\b(?:give|show) me (?:the )?time\b",
+            r"\btime in (?:iso|24|12)",
+            r"\b(?:today'?s|the|current) date\b",
+            r"\bwhat(?:'s| is)? (?:the )?date\b",
+            r"\bdate today\b",
+            r"\bwhat day (?:is it|is today|of the week)\b",
+            r"\bwhat(?:'s| is) the day\b",
+            r"\b(?:my |the )?timezone\b",
+            r"\bclock\b",
+            r"^time\??$",
         )
-        if any(trigger in lowered for trigger in time_triggers):
+        time_triggers = [p for p in time_patterns if re.search(p, lowered)]
+        if time_triggers:
             fmt = "24h" if ("24" in lowered or "military" in lowered) else "12h"
             if "iso" in lowered:
                 fmt = "iso"

@@ -9,7 +9,7 @@ import { LyraSocket } from "../services/websocket";
  *   idle -> listening (mic) -> processing (backend STT/LYRA/TTS) -> speaking (playback) -> idle
  * Everything except microphone capture and playback runs on the backend.
  */
-export function useVoice({ voice = null, autoSpeak = true, handsFree = false, onSession } = {}) {
+export function useVoice({ voice = null, autoSpeak = true, handsFree = false, volume = 1, onSession } = {}) {
   const { notify, upsertTask } = useApp();
   const { activeSessionId, appendMessage, updateMessage, refreshSessions } = useChat();
   const [state, setState] = useState("idle");
@@ -21,11 +21,13 @@ export function useVoice({ voice = null, autoSpeak = true, handsFree = false, on
   const socketRef = useRef(null);
   const recorderRef = useRef(null);
   const playbackRef = useRef(null);
+  const audioQueueRef = useRef([]);
+  const turnDoneRef = useRef(false);
   const pendingIdRef = useRef(null);
   const stateRef = useRef(state);
   stateRef.current = state;
-  const optsRef = useRef({ voice, autoSpeak, handsFree, onSession, activeSessionId });
-  optsRef.current = { voice, autoSpeak, handsFree, onSession, activeSessionId };
+  const optsRef = useRef({ voice, autoSpeak, handsFree, volume, onSession, activeSessionId });
+  optsRef.current = { voice, autoSpeak, handsFree, volume, onSession, activeSessionId };
   const startRef = useRef(null);
 
   const sendStart = useCallback(() => {
@@ -49,21 +51,74 @@ export function useVoice({ voice = null, autoSpeak = true, handsFree = false, on
     }
   }, [updateMessage]);
 
+  // Plays queued clips back-to-back (acknowledgement, then the reply) without overlap.
+  const playNext = useCallback(() => {
+    if (playbackRef.current) return;
+    const next = audioQueueRef.current.shift();
+    if (!next) {
+      if (turnDoneRef.current && stateRef.current === "speaking") toIdle();
+      else if (stateRef.current === "speaking") setState("processing");
+      return;
+    }
+    setState("speaking");
+    setDetail("");
+    playbackRef.current = playBase64Audio(next.audio_base64, next.mime_type, {
+      volume: optsRef.current.volume,
+      onEnd: () => {
+        playbackRef.current = null;
+        if (next.kind === "reply") turnDoneRef.current = true;
+        if (stateRef.current === "speaking") playNext();
+      },
+    });
+  }, [toIdle]);
+
+  const stopAudio = useCallback(() => {
+    audioQueueRef.current = [];
+    playbackRef.current?.stop();
+    playbackRef.current = null;
+  }, []);
+
+  const markInterrupted = useCallback(() => {
+    setState("interrupted");
+    setDetail("Interrupted");
+    setTimeout(() => {
+      if (stateRef.current === "interrupted") {
+        setState("idle");
+        setDetail("");
+      }
+    }, 1600);
+  }, []);
+
   const onEvent = useCallback((ev) => {
     switch (ev.type) {
       case "voice_status":
+        if (stateRef.current === "speaking") break; // keep "Speaking" while an acknowledgement plays
         if (ev.state === "transcribing") setDetail("Transcribing…");
         else if (ev.state === "thinking") setDetail("Thinking…");
         else if (ev.state === "synthesizing") setDetail("Preparing voice…");
-        else if (ev.state === "idle" && stateRef.current === "processing" && !optsRef.current.autoSpeak) toIdle();
+        else if (ev.state === "idle" && stateRef.current === "processing") {
+          // Turn finished without (more) audio: e.g. speaking disabled or nothing to say.
+          if (!audioQueueRef.current.length && !playbackRef.current) toIdle();
+        }
         break;
-      case "transcript":
-        if (!ev.text) {
-          toIdle("I didn't catch that — try again.");
+      case "transcript": {
+        const coughed = (ev.audio_events || []).some((e) => e.type === "cough");
+        if (!ev.text && !coughed) {
+          toIdle("Sorry, I didn't quite catch that — could you say it again?");
           return;
         }
-        appendMessage({ role: "user", content: ev.text, source: "voice" });
+        appendMessage({
+          role: "user",
+          content: ev.text || "(cough detected)",
+          source: "voice",
+          audioEvents: ev.audio_events,
+          muted: !ev.text,
+        });
         pendingIdRef.current = appendMessage({ role: "assistant", content: "", pending: true, source: "voice" });
+        break;
+      }
+      case "acknowledgement":
+        if (pendingIdRef.current) updateMessage(pendingIdRef.current, { ack: ev.text });
         break;
       case "task_started":
       case "task_update":
@@ -82,15 +137,9 @@ export function useVoice({ voice = null, autoSpeak = true, handsFree = false, on
         if (!optsRef.current.autoSpeak) toIdle();
         break;
       case "audio":
-        if (stateRef.current !== "processing") return; // interrupted meanwhile
-        setState("speaking");
-        setDetail("");
-        playbackRef.current = playBase64Audio(ev.audio_base64, ev.mime_type, {
-          onEnd: () => {
-            playbackRef.current = null;
-            if (stateRef.current === "speaking") toIdle();
-          },
-        });
+        if (stateRef.current !== "processing" && stateRef.current !== "speaking") return; // interrupted meanwhile
+        audioQueueRef.current.push(ev);
+        playNext();
         break;
       case "cancelled":
         if (pendingIdRef.current) {
@@ -104,7 +153,7 @@ export function useVoice({ voice = null, autoSpeak = true, handsFree = false, on
       default:
         break;
     }
-  }, [appendMessage, fail, refreshSessions, toIdle, updateMessage, upsertTask]);
+  }, [appendMessage, fail, playNext, refreshSessions, toIdle, updateMessage, upsertTask]);
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
@@ -124,6 +173,7 @@ export function useVoice({ voice = null, autoSpeak = true, handsFree = false, on
     socket.connect();
     return () => {
       recorderRef.current?.cancel();
+      audioQueueRef.current = [];
       playbackRef.current?.stop();
       socket.close();
     };
@@ -146,6 +196,8 @@ export function useVoice({ voice = null, autoSpeak = true, handsFree = false, on
     if (stateRef.current === "listening" || stateRef.current === "processing") return;
     setError(null);
     setDetail("");
+    turnDoneRef.current = false;
+    audioQueueRef.current = [];
     const recorder = new MicRecorder({ onLevel: setLevel });
     recorderRef.current = recorder;
     setState("listening");
@@ -177,29 +229,27 @@ export function useVoice({ voice = null, autoSpeak = true, handsFree = false, on
   /** Primary button behaviour: start, or finish speaking early, or interrupt LYRA. */
   const toggle = useCallback(() => {
     const s = stateRef.current;
-    if (s === "idle" || s === "error") return start();
+    if (s === "idle" || s === "error" || s === "interrupted") return start();
     if (s === "listening") return recorderRef.current?.stop();
-    if (s === "processing") {
+    if (s === "processing" || s === "speaking") {
       socketRef.current?.send({ type: "interrupt" });
-      setState("idle");
-      setDetail("Interrupted.");
-      return undefined;
+      stopAudio();
+      markInterrupted();
     }
-    if (s === "speaking") {
-      playbackRef.current?.stop();
+    return undefined;
+  }, [start, stopAudio, markInterrupted]);
+
+  const cancel = useCallback(() => {
+    const s = stateRef.current;
+    recorderRef.current?.cancel();
+    if (s === "processing" || s === "speaking") socketRef.current?.send({ type: "interrupt" });
+    stopAudio();
+    if (s === "processing" || s === "speaking") markInterrupted();
+    else {
       setState("idle");
       setDetail("");
     }
-    return undefined;
-  }, [start]);
-
-  const cancel = useCallback(() => {
-    recorderRef.current?.cancel();
-    playbackRef.current?.stop();
-    if (stateRef.current === "processing") socketRef.current?.send({ type: "interrupt" });
-    setState("idle");
-    setDetail("");
-  }, []);
+  }, [stopAudio, markInterrupted]);
 
   useEffect(() => {
     if (error) notify(error, "error");

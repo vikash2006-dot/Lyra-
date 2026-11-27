@@ -7,6 +7,7 @@ import DashboardPage from "./pages/DashboardPage";
 import DocumentsPage from "./pages/DocumentsPage";
 import LearningPage from "./pages/LearningPage";
 import MemoryPage from "./pages/MemoryPage";
+import ScreenPage from "./pages/ScreenPage";
 import SettingsPage from "./pages/SettingsPage";
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="memory" element={<MemoryPage />} />
             <Route path="documents" element={<DocumentsPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="screen" element={<ScreenPage />} />
             <Route path="*" element={<Navigate to="/chat" replace />} />
           </Route>
         </Routes>

@@ -55,6 +55,26 @@ communicate only through the HTTP API and three WebSocket channels.
 * **Data** — all SQLite databases live in `backend/storage/data/` (`LYRA_DATA_DIR`). Relative DB paths in
   `.env` are anchored there by `resolve_data_paths`.
 
+## Screen awareness (`lyra/vision/`)
+
+SEE → UNDERSTAND → PLAN → ACT → VERIFY → ADAPT, built on existing infrastructure:
+
+* `capture.py` — `screencapture` per display/window, Retina scale + display origin for coordinate mapping, Screen
+  Recording permission check (never bypassed), screenshots kept in memory only; `sips` downscaling for AI.
+* `apps.py` — frontmost app (NSWorkspace), windows (Quartz), focused window title (Accessibility).
+* `ocr.py` — on-device Apple Vision OCR with bounding boxes (~0.1 s warm; warmed at startup).
+* `elements.py` — UI elements from Accessibility (exact) + OCR (text) + vision model (semantic); `locate()` resolves
+  "the Login button" in that priority order.
+* `analyzer.py` — vision requests only to explicitly vision-capable models (provider defaults are often text-only),
+  provider fallback with per-model rate-limit handling; structured JSON (summary, elements, errors, answer, next step).
+* `service.py` — `ScreenAwareness`: observe → `ScreenContext` (per conversation, 10 min TTL), actions through the
+  existing `ComputerController` policy (fresh coordinates only, sensitive targets need confirmation, never types
+  secrets), OCR/vision verification, opt-in `ScreenMonitor` (app/window switches, new errors, big changes; no AI).
+* `agent.py` — `VisualAgent`: contextual routing of screen requests (incl. follow-ups like "fix it", "check again"),
+  direct local commands ("click the Login button") and a bounded multi-step loop (6 steps, retries, verification).
+* `lyra/tools/screen_tool.py` — every visual step runs through `ToolExecutor`, so it is permission-checked and shown
+  live as task steps. Cloud vision needs the user's consent (Settings / Screen page); otherwise on-device only.
+
 ## Frontend
 
 * `services/api.js` is the only place that calls `fetch`: base URL from `VITE_API_URL`, optional bearer

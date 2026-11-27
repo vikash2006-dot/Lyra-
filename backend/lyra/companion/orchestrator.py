@@ -1,10 +1,12 @@
 """Conversational turn orchestrator for LYRA."""
 
 import asyncio
-from typing import Any
+from typing import Any, Sequence
 
 from lyra.companion.context import ConversationContext
-from lyra.companion.personality import PersonalityProfile
+from lyra.companion.emotion import EmotionAnalyzer, build_turn_guidance
+from lyra.companion.personality import PersonalityProfile, ReplyStyler
+from lyra.companion.social import SocialResponder, detect_social_intent
 from lyra.companion.planner import ActionPlanner, TaskPlan
 from lyra.companion.session import Session
 from lyra.core.exceptions import (
@@ -23,7 +25,7 @@ from lyra.tools.registry import ToolRegistry
 from lyra.tools.sanitizer import wrap_untrusted_context
 
 UNCONFIGURED_ASSISTANCE_MESSAGE = (
-    "I am currently running without any configured AI providers. "
+    "I'm sorry, Boss — I'm currently running without any configured AI providers. "
     "To enable conversational intelligence, please add a free provider API key "
     "(such as GEMINI_API_KEY, GROQ_API_KEY, OPENROUTER_API_KEY, or CEREBRAS_API_KEY) "
     "to your .env file or environment."
@@ -66,6 +68,12 @@ class CompanionOrchestrator:
             offline_mode if offline_mode is not None else getattr(self.router, "offline_mode", False)
         )
         self._logger = get_logger("orchestrator")
+        # Personality & emotional-intelligence layer (shared by every provider).
+        self.social = SocialResponder()
+        self.emotion_analyzer = EmotionAnalyzer()
+        self.emotional_awareness: bool = True
+        self.styler = ReplyStyler(self.personality.user_address)
+        self.visual_agent: Any | None = None  # set by bootstrap (screen awareness)
 
     @property
     def offline_mode(self) -> bool:
@@ -88,6 +96,44 @@ class CompanionOrchestrator:
         if not clean_input:
             raise ModelValidationError("User input cannot be empty or whitespace.")
         return clean_input
+
+    # 1b. Social intents and emotional context
+    def social_reply(self, session: Session, clean_input: str) -> str | None:
+        """Deterministic, varied reply for purely social messages (greetings, farewells, thanks...)."""
+        try:
+            pending = self.planner.get_task_context(session.session_id).get("pending_confirmation")
+        except Exception:
+            pending = None
+        if pending:
+            return None  # "ok"/"sure" may be answering a confirmation prompt
+        intent = detect_social_intent(clean_input)
+        if intent is None:
+            return None
+        return self.social.reply(intent)
+
+    def with_turn_guidance(
+        self,
+        clean_input: str,
+        metadata: dict[str, Any] | None,
+        is_task: bool = False,
+    ) -> dict[str, Any]:
+        """Attach emotion/audio-event guidance for this turn to request metadata."""
+        meta = dict(metadata or {})
+        audio_events = meta.get("audio_events") or []
+        signal = self.emotion_analyzer.analyze(clean_input) if self.emotional_awareness else None
+        guidance = build_turn_guidance(signal, audio_events, is_task=is_task)
+        if signal is not None:
+            meta["emotion"] = {"emotion": signal.emotion, "confidence": signal.confidence}
+        if guidance:
+            meta["turn_guidance"] = guidance
+        return meta
+
+    def _style_action_reply(self, tool_result: Any, reply: str) -> str:
+        if tool_result.success:
+            return self.styler.success(reply)
+        if tool_result.metadata.get("requires_confirmation"):
+            return reply
+        return self.styler.failure(tool_result.error)
 
     # 2. Tool decision
     def decide_tool(
@@ -141,7 +187,7 @@ class CompanionOrchestrator:
                     memory_context = f"{memory_context}\n\n{learn_summary}" if memory_context else learn_summary
             except Exception:
                 pass
-        meta = dict(metadata or {})
+        meta = self.with_turn_guidance(clean_input, metadata)
         if self._offline_mode:
             meta["offline_mode"] = True
 
@@ -179,7 +225,7 @@ class CompanionOrchestrator:
         session.add_user_message(clean_input)
 
         if plan.intent == "cancel_action":
-            reply = "Action cancelled."
+            reply = f"Okay, {self.styler.boss}. I've cancelled that."
             session.add_assistant_message(reply)
             return reply
 
@@ -200,7 +246,7 @@ class CompanionOrchestrator:
                     break
 
         if not results:
-            reply = "No actions were executed."
+            reply = f"I'm sorry, {self.styler.boss} — I wasn't able to start that task. Would you like me to try again?"
             session.add_assistant_message(reply)
             return reply
 
@@ -294,6 +340,14 @@ class CompanionOrchestrator:
             else:
                 fallback_reply = f"I couldn't complete the action: {failed.error}"
 
+        # Polite, honest final wording in LYRA's voice.
+        if all(r.is_success() for r in results):
+            fallback_reply = self.styler.success(fallback_reply)
+        else:
+            failed_res = next(r for r in results if not r.is_success())
+            if not failed_res.metadata.get("requires_confirmation"):
+                fallback_reply = self.styler.failure(failed_res.error)
+
         # Observability / Debug Mode
         import os, sys
         if os.environ.get("LYRA_DEBUG", "").lower() in ("true", "1", "yes"):
@@ -318,11 +372,12 @@ class CompanionOrchestrator:
                 f"User asked: {clean_input}\n\n"
                 f"Real Action Execution Results:\n{contained_output}\n\n"
                 "INSTRUCTIONS:\n"
-                "1. Confirm directly to the user what was actually performed based on the execution results above.\n"
-                "2. Be extremely concise and natural in one short sentence (e.g. 'Done, I created the Projects folder on your Desktop.').\n"
+                "1. Confirm politely and warmly what was actually performed, based only on the execution results above.\n"
+                "2. Be concise and natural: one or two short sentences (e.g. 'Done, Boss. The Projects folder has been created on your Desktop.').\n"
                 "3. Do NOT provide instructions on how to do the action manually (e.g. do not say 'You can use mkdir...').\n"
                 "4. Never claim an action succeeded if it failed.\n"
-                "5. If an action required confirmation, ask for confirmation clearly."
+                "5. If an action failed, apologise briefly, say why in plain words, and offer to try again.\n"
+                "6. If an action required confirmation, ask for confirmation clearly and politely."
             )
             req_metadata = dict(metadata or {})
             req_metadata["task_results"] = [r.output for r in results]
@@ -369,6 +424,23 @@ class CompanionOrchestrator:
             self._logger.warning("Invalid input received: %s", val_err)
             return f"Input Error: {val_err}"
 
+        # Step 1a: Screen-related requests (see / act on / verify the user's screen).
+        if not parts and self.visual_agent is not None:
+            kind = self.visual_agent.classify(clean_input, session.session_id)
+            if kind:
+                session.add_user_message(clean_input)
+                reply = await self.visual_agent.handle(kind, clean_input, session.session_id)
+                session.add_assistant_message(reply, metadata={"visual": kind})
+                return reply
+
+        # Step 1b: Purely social messages (greetings, farewells, thanks) get a natural direct reply.
+        if not parts:
+            social = self.social_reply(session, clean_input)
+            if social:
+                session.add_user_message(clean_input)
+                session.add_assistant_message(social, metadata={"social_intent": True})
+                return social
+
         # Step 2a: Check ActionPlanner for task planning & real action execution
         if not parts and self.tool_executor and self.tool_registry:
             plan = self.planner.plan(clean_input, session=session)
@@ -401,6 +473,7 @@ class CompanionOrchestrator:
             if tool_result.tool_name in action_tools:
                 tool = self.tool_registry.get(tool_result.tool_name)
                 reply = tool.format_result(tool_result) if tool and hasattr(tool, "format_result") else tool_result.to_text()
+                reply = self._style_action_reply(tool_result, reply)
                 session.add_assistant_message(
                     content=reply,
                     metadata={"tool_name": tool_result.tool_name, "tool_success": tool_result.success},
@@ -419,7 +492,7 @@ class CompanionOrchestrator:
                     f"{contained_output}\n\n"
                     "Respond to the user naturally, accurately, and concisely incorporating the factual data from the tool result."
                 )
-                req_metadata = dict(metadata or {})
+                req_metadata = self.with_turn_guidance(clean_input, metadata, is_task=True)
                 req_metadata["tool_result"] = tool_result.output
                 memory_context = (
                     self.memory_manager.get_context_summary(session.user_id)
@@ -505,13 +578,13 @@ class CompanionOrchestrator:
         except ProviderError as prov_err:
             clean_err = sanitize_text(str(prov_err))
             self._logger.error("Provider execution error: %s", clean_err)
-            error_msg = "I encountered an error communicating with the AI service. Please try again shortly."
+            error_msg = "I'm sorry, Boss — I had trouble reaching my AI service just now. Could you please try again in a moment?"
             session.add_assistant_message(error_msg)
             return error_msg
         except Exception as err:  # pylint: disable=broad-except
             clean_err = sanitize_text(str(err))
             self._logger.error("Unexpected error in process_turn: %s", clean_err)
-            error_msg = "An unexpected error occurred. Please try again."
+            error_msg = "I'm sorry, Boss — something unexpected went wrong on my side. Could you please try that again?"
             session.add_assistant_message(error_msg)
             return error_msg
 
@@ -549,6 +622,27 @@ class CompanionOrchestrator:
             yield StreamCompleted(full_text=err_text)
             return
 
+        if not parts and self.visual_agent is not None:
+            kind = self.visual_agent.classify(clean_input, session.session_id)
+            if kind:
+                session.add_user_message(clean_input)
+                reply = await self.visual_agent.handle(kind, clean_input, session.session_id)
+                session.add_assistant_message(reply, metadata={"visual": kind})
+                yield StreamStarted(provider="vision", model=kind)
+                yield TextDelta(delta=reply, index=0)
+                yield StreamCompleted(full_text=reply)
+                return
+
+        if not parts:
+            social = self.social_reply(session, clean_input)
+            if social:
+                session.add_user_message(clean_input)
+                session.add_assistant_message(social, metadata={"social_intent": True})
+                yield StreamStarted(provider="personality", model="social")
+                yield TextDelta(delta=social, index=0)
+                yield StreamCompleted(full_text=social)
+                return
+
         # Check for action plan if no media attachments
         if not parts and self.tool_executor and self.tool_registry:
             plan = self.planner.plan(clean_input, session=session)
@@ -577,6 +671,7 @@ class CompanionOrchestrator:
                 if tool_result.tool_name in action_tools:
                     tool = self.tool_registry.get(tool_result.tool_name)
                     reply = tool.format_result(tool_result) if tool and hasattr(tool, "format_result") else tool_result.to_text()
+                    reply = self._style_action_reply(tool_result, reply)
                     session.add_assistant_message(reply)
                     yield StreamStarted(provider="tool_executor", model=tool_result.tool_name)
                     yield TextDelta(delta=reply, index=0)
@@ -594,7 +689,7 @@ class CompanionOrchestrator:
                         f"{contained_output}\n\n"
                         "Respond to the user naturally, accurately, and concisely incorporating the factual data from the tool result."
                     )
-                    req_metadata = dict(metadata or {})
+                    req_metadata = self.with_turn_guidance(clean_input, metadata, is_task=True)
                     req_metadata["tool_result"] = tool_result.output
                     memory_context = (
                         self.memory_manager.get_context_summary(session.user_id)

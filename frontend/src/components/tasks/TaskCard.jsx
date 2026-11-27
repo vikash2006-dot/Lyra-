@@ -50,6 +50,11 @@ export default function TaskCard({ task, compact = false, onConfirm }) {
   if (!task) return null;
   const active = ACTIVE_TASK_STATUSES.has(task.status);
   const steps = buildSteps(task);
+  // Finished tasks in compact lists collapse to a one-line summary to keep the panel calm.
+  const collapsed = compact && !active && task.status !== "waiting_for_confirmation";
+  const summary = task.status === "failed"
+    ? task.error
+    : (task.steps || []).map((s) => s.description || s.tool).filter(Boolean).join(" · ") || task.verification?.summary;
 
   const cancel = async () => {
     setCancelling(true);
@@ -71,6 +76,7 @@ export default function TaskCard({ task, compact = false, onConfirm }) {
         </div>
         <span className={`task-status ts-${task.status}`}>{STATUS_LABELS[task.status] || task.status}</span>
       </div>
+      {collapsed ? (summary && <p className="task-summary" title={summary}>{summary}</p>) : (
       <ol className="task-steps">
         {steps.map((s, i) => (
           <li key={i} className={`step step-${s.status}`}>
@@ -82,6 +88,7 @@ export default function TaskCard({ task, compact = false, onConfirm }) {
           </li>
         ))}
       </ol>
+      )}
       {task.status === "waiting_for_confirmation" && (
         <div className="task-confirm">
           <p>{task.confirmation_prompt || "LYRA needs your confirmation to continue."}</p>

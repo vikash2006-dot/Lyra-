@@ -120,6 +120,8 @@ class TaskTracker:
         self.bus = bus
         self._active: dict[str, dict[str, Any]] = {}
         self._handles: dict[str, asyncio.Task[Any]] = {}
+        # Produces LYRA's short "Of course, Boss. I'll ..." line when a task is planned.
+        self.ack_fn: Any = None
 
     # Creation / updates ---------------------------------------------------------
     def new_task(self, session_id: str | None, command: str, status: str = "pending") -> dict[str, Any]:
@@ -231,6 +233,15 @@ class TaskTracker:
             for i, s in enumerate(plan.steps)
         ]
         changes: dict[str, Any] = {"intent": plan.intent, "steps": steps, "message": "Plan ready"}
+        if self.ack_fn and steps and not plan.user_confirmation_prompt and turn.emit:
+            first = plan.steps[0].description if len(plan.steps) == 1 else None
+            try:
+                ack = self.ack_fn(first)
+            except Exception:
+                ack = None
+            if ack:
+                changes["acknowledgement"] = ack
+                turn.emit(make_event("acknowledgement", task_id=task["id"], text=ack))
         if plan.user_confirmation_prompt:
             changes.update(
                 status="waiting_for_confirmation",

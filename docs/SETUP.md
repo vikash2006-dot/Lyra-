@@ -48,3 +48,23 @@ keys there — anything in it is shipped to the browser. Provider keys belong in
 * **No spoken reply** — "Speak replies" in Settings; on macOS the `say` command must exist.
 * **Mac automation fails** — grant Accessibility / Automation permissions to the app running the backend
   (Terminal, iTerm or VS Code) in System Settings → Privacy & Security.
+
+## Deploy the backend on Render
+
+`render.yaml` (project root) is a Render Blueprint for the backend.
+
+1. Push the repository to GitHub.
+2. Render Dashboard → **New → Blueprint** → pick the repository → Render reads `render.yaml`.
+3. Fill in the secret values it asks for (provider API keys, `CORS_ORIGINS` = your frontend URL). `LYRA_API_TOKEN`
+   is generated automatically — copy it from the service's Environment tab.
+4. After the deploy, check `https://<service>.onrender.com/api/health` and `/docs`.
+5. Point the frontend at it: `VITE_API_URL=https://<service>.onrender.com` and `VITE_API_TOKEN=<token>`.
+
+What runs on the server: chat with all cloud providers and fallback, personality/emotion layer, memory, sessions,
+tasks, documents, learning, web search/news/weather/maps, speech-to-text, and speech output via ElevenLabs
+(`ELEVENLABS_API_KEY`). Mac-only features — macOS voices, screen awareness, file/app/browser automation — are
+disabled by `LYRA_SERVER_MODE=true` and keep working when you run LYRA locally on your Mac.
+
+Data: the free plan has no persistent disk, so memories/conversations reset on every deploy or restart. For
+persistence use a paid plan and uncomment the `disk` block (+ `LYRA_DATA_DIR=/var/data`) in `render.yaml`.
+Note: a token baked into a public frontend build is visible to anyone who loads that frontend.

@@ -70,6 +70,9 @@ export function ChatProvider({ children }) {
             setPhase("working");
           }
           break;
+        case "acknowledgement":
+          patchPending(() => ({ ack: ev.text }));
+          break;
         case "response_start":
           setPhase("streaming");
           patchPending(() => ({ model: ev.model, provider: ev.provider }));

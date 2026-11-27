@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC);
+CREATE TABLE IF NOT EXISTS preferences (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS documents (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -201,6 +205,19 @@ class APIStore:
                 self.save_task(task)
                 changed += 1
         return changed
+
+    # Preferences --------------------------------------------------------------
+    def get_preferences(self) -> dict[str, Any]:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT key, value FROM preferences").fetchall()
+        return {r["key"]: json.loads(r["value"]) for r in rows}
+
+    def set_preferences(self, prefs: dict[str, Any]) -> None:
+        with self._conn() as conn:
+            conn.executemany(
+                "INSERT INTO preferences (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [(k, json.dumps(v)) for k, v in prefs.items()],
+            )
 
     # Documents ----------------------------------------------------------------
     def add_document(self, doc: dict[str, Any]) -> None:

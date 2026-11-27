@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import ChatWindow from "../components/chat/ChatWindow";
 import MessageInput from "../components/chat/MessageInput";
 import Icon from "../components/common/Icon";
@@ -12,6 +12,7 @@ import { useApp } from "../context/AppContext";
 import { useChat } from "../context/ChatContext";
 import { usePreferences } from "../hooks/usePreferences";
 import { useVoice } from "../hooks/useVoice";
+import { VISION_STATE_LABELS } from "./ScreenPage";
 
 const UNSET = Symbol("unset");
 
@@ -19,16 +20,16 @@ export default function ChatPage() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
   const { openMenu } = useLayout();
-  const { backendOnline, notify } = useApp();
+  const { backendOnline, notify, vision } = useApp();
   const chat = useChat();
   const { activeSessionId, loadSession, sessions } = chat;
   const [prefs, setPrefs] = usePreferences();
   const [panelOpen, setPanelOpen] = useState(() => prefs.showActivity && window.innerWidth > 1100);
 
   const voice = useVoice({
-    voice: prefs.voice || null,
     autoSpeak: prefs.autoSpeak,
     handsFree: prefs.handsFree,
+    volume: prefs.volume,
     onSession: (id) => chat.setActiveSessionId(id),
   });
 
@@ -70,6 +71,12 @@ export default function ChatPage() {
           title={title}
           onMenu={openMenu}
           right={
+            <>
+            {vision.state && vision.state !== "idle" && (
+              <Link to="/screen" className={`vision-pill small tone-${["capturing", "analyzing", "executing", "verifying"].includes(vision.state) ? "busy" : vision.state === "permission_denied" || vision.state === "failed" ? "bad" : "good"}`} title="Screen awareness">
+                <Icon name="eye" size={13} /> {VISION_STATE_LABELS[vision.state] || vision.state}
+              </Link>
+            )}
             <button
               className={`icon-btn ${panelOpen ? "active" : ""}`}
               onClick={() => {
@@ -81,6 +88,7 @@ export default function ChatPage() {
             >
               <Icon name="activity" size={18} />
             </button>
+            </>
           }
         />
         <ChatWindow
@@ -104,7 +112,10 @@ export default function ChatPage() {
                 state={voice.state}
                 level={voice.level}
                 onClick={voice.toggle}
-                disabled={!backendOnline || !voice.connected || chat.busy}
+                disabled={
+                  !backendOnline || !voice.connected || chat.busy ||
+                  (!prefs.allowInterrupt && (voice.state === "processing" || voice.state === "speaking"))
+                }
               />
             }
           />

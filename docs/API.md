@@ -48,6 +48,14 @@ If `LYRA_API_TOKEN` is set, send `Authorization: Bearer <token>` (WebSockets: `?
 | GET/PUT | `/api/settings` | Safe settings view / `{offline_mode}` at runtime |
 | GET | `/api/settings/providers` | Provider name, configured, health status, model, priority (no keys) |
 | GET | `/api/system/status` | Uptime, providers, tools, voice, storage counts, active tasks |
+| GET | `/api/vision/status` | Screen/Accessibility permission, active app & window, displays, OCR, vision models, monitoring |
+| POST | `/api/vision/capture` | Capture now (`{session_id?, target: screen\|active_window, display?}`) → local OCR/elements + preview; no AI |
+| POST | `/api/vision/analyze` | Capture + analyze (`{question?, ...}`) → structured screen context (vision AI only with consent) |
+| POST | `/api/vision/ask` | Natural-language screen request/command, runs as a tracked LYRA turn |
+| GET/DELETE | `/api/vision/context?session_id=` | Latest screen context (+ preview) / clear it |
+| PUT | `/api/vision/settings` | `{enabled?, cloud_consent?}` (persisted) |
+| POST | `/api/vision/permission/request` | Show macOS's own Screen Recording prompt |
+| POST | `/api/vision/monitor/start` · `/stop` · GET `/monitor/status` | Opt-in change monitoring (`{interval_seconds}` 2–60) |
 
 Common error codes: `VALIDATION_ERROR`, `SESSION_NOT_FOUND`, `SESSION_BUSY`, `TASK_NOT_FOUND`,
 `TASK_NOT_CANCELLABLE`, `MEMORY_REJECTED`, `UNSUPPORTED_AUDIO`, `DUPLICATE_AUDIO`, `UNSUPPORTED_FILE_TYPE`,
@@ -83,4 +91,6 @@ Receive: `connected`, `message_received`, `thinking`, `task_started`, `task_upda
 utterance (WAV), `{"type":"interrupt"}` to stop. Receive: `voice_status` (`transcribing|thinking|synthesizing|idle`),
 `transcript`, task/tool events, `response`, `audio` (`mime_type`, `audio_base64`), `cancelled`, `error`.
 
-**`/ws/events`** — receive-only feed of `task_update` (all tasks) and `notification` (scheduled reminders).
+**`/ws/events`** — receive-only feed of `task_update` (all tasks), `notification` (scheduled reminders),
+`vision_state` (`idle|capturing|analyzing|analyzed|executing|verifying|monitoring|permission_denied|failed`),
+`vision_context` (new structured screen context) and `screen_change` (`app_switch|window_change|error_appeared|error_cleared|content_changed`).
